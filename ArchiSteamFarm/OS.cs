@@ -21,30 +21,21 @@
 
 using System;
 using System.IO;
-using System.Net.WebSockets;
 using System.Runtime.InteropServices;
 using ArchiSteamFarm.Localization;
 
 namespace ArchiSteamFarm {
 	internal static class OS {
-		internal static void Init(bool service) {
+		internal static bool IsUnix => RuntimeInformation.IsOSPlatform(OSPlatform.Linux) || RuntimeInformation.IsOSPlatform(OSPlatform.OSX);
+		internal static string Variant => RuntimeInformation.OSDescription.Trim();
+
+		internal static void Init(bool systemRequired) {
 			if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) {
 				DisableQuickEditMode();
 
-				if (service) {
+				if (systemRequired) {
 					KeepWindowsSystemActive();
 				}
-			}
-		}
-
-		// TODO: We should really get rid of this once https://github.com/SteamRE/SteamKit/issues/455 or https://github.com/dotnet/corefx/issues/9503 is solved
-		internal static bool SupportsWebSockets() {
-			try {
-				using (new ClientWebSocket()) {
-					return true;
-				}
-			} catch (PlatformNotSupportedException) {
-				return false;
 			}
 		}
 
@@ -122,7 +113,7 @@ namespace ArchiSteamFarm {
 			}
 
 			[Flags]
-			internal enum EUnixPermission {
+			internal enum EUnixPermission : ushort {
 				OtherExecute = 0x1,
 				OtherRead = 0x4,
 				GroupExecute = 0x8,

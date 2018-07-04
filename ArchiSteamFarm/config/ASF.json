@@ -1,6 +1,5 @@
 {
 	"AutoRestart": true,
-	"BackgroundGCPeriod": 0,
 	"Blacklist": [],
 	"CommandPrefix": "!",
 	"ConfirmationsLimiterDelay": 10,
@@ -12,6 +11,7 @@
 	"Headless": false,
 	"IdleFarmingPeriod": 8,
 	"InventoryLimiterDelay": 3,
+	"IPC": false,
 	"IPCPassword": null,
 	"IPCPrefixes": [
 		"http://127.0.0.1:1242/"
@@ -22,7 +22,11 @@
 	"OptimizationMode": 0,
 	"Statistics": true,
 	"SteamOwnerID": 0,
-	"SteamProtocols": 3,
+	"SteamProtocols": 7,
 	"UpdateChannel": 1,
-	"UpdatePeriod": 24
+	"UpdatePeriod": 24,
+	"WebLimiterDelay": 200,
+	"WebProxy": null,
+	"WebProxyPassword": null,
+	"WebProxyUsername": null
 }

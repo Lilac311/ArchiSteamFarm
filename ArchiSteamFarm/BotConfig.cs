@@ -29,6 +29,7 @@ using System.Threading.Tasks;
 using ArchiSteamFarm.Json;
 using ArchiSteamFarm.Localization;
 using Newtonsoft.Json;
+using SteamKit2;
 
 namespace ArchiSteamFarm {
 	[SuppressMessage("ReSharper", "ClassCannotBeInstantiated")]
@@ -48,16 +49,10 @@ namespace ArchiSteamFarm {
 		internal readonly string CustomGamePlayedWhileIdle;
 
 		[JsonProperty(Required = Required.DisallowNull)]
-		internal readonly bool DismissInventoryNotifications;
-
-		[JsonProperty(Required = Required.DisallowNull)]
 		internal readonly bool Enabled;
 
 		[JsonProperty(Required = Required.DisallowNull)]
 		internal readonly EFarmingOrder FarmingOrder = EFarmingOrder.Unordered;
-
-		[JsonProperty(Required = Required.DisallowNull)]
-		internal readonly bool FarmOffline;
 
 		[JsonProperty(Required = Required.DisallowNull)]
 		internal readonly HashSet<uint> GamesPlayedWhileIdle = new HashSet<uint>();
@@ -73,9 +68,6 @@ namespace ArchiSteamFarm {
 
 		[JsonProperty(Required = Required.DisallowNull)]
 		internal readonly bool IdleRefundableGames = true;
-
-		[JsonProperty(Required = Required.DisallowNull)]
-		internal readonly bool IsBotAccount;
 
 		[JsonProperty(ObjectCreationHandling = ObjectCreationHandling.Replace, Required = Required.DisallowNull)]
 		internal readonly HashSet<Steam.Asset.EType> LootableTypes = new HashSet<Steam.Asset.EType> {
@@ -117,6 +109,12 @@ namespace ArchiSteamFarm {
 		[JsonProperty(Required = Required.DisallowNull)]
 		internal readonly bool UseLoginKeys = true;
 
+		[JsonProperty(Required = Required.DisallowNull)]
+		internal EBotBehaviour BotBehaviour { get; private set; } = EBotBehaviour.None;
+
+		[JsonProperty(Required = Required.DisallowNull)]
+		internal EPersonaState OnlineStatus { get; private set; } = EPersonaState.Online;
+
 		[JsonProperty]
 		internal string SteamLogin { get; set; }
 
@@ -130,6 +128,17 @@ namespace ArchiSteamFarm {
 		internal string SteamPassword { get; set; }
 
 		private bool ShouldSerializeSensitiveDetails = true;
+
+		[JsonProperty(Required = Required.DisallowNull)]
+		private bool DismissInventoryNotifications {
+			set {
+				ASF.ArchiLogger.LogGenericWarning(string.Format(Strings.WarningDeprecated, nameof(DismissInventoryNotifications), nameof(BotBehaviour)));
+
+				if (value) {
+					BotBehaviour |= EBotBehaviour.DismissInventoryNotifications;
+				}
+			}
+		}
 
 		[JsonProperty(PropertyName = SharedInfo.UlongCompatibilityStringPrefix + nameof(SteamMasterClanID), Required = Required.DisallowNull)]
 		private string SSteamMasterClanID {
@@ -148,7 +157,7 @@ namespace ArchiSteamFarm {
 		public bool ShouldSerializeSteamParentalPIN() => ShouldSerializeSensitiveDetails;
 		public bool ShouldSerializeSteamPassword() => ShouldSerializeSensitiveDetails;
 
-		internal static BotConfig Load(string filePath) {
+		internal static async Task<BotConfig> Load(string filePath) {
 			if (string.IsNullOrEmpty(filePath)) {
 				ASF.ArchiLogger.LogNullError(nameof(filePath));
 				return null;
@@ -161,7 +170,7 @@ namespace ArchiSteamFarm {
 			BotConfig botConfig;
 
 			try {
-				botConfig = JsonConvert.DeserializeObject<BotConfig>(File.ReadAllText(filePath));
+				botConfig = JsonConvert.DeserializeObject<BotConfig>(await RuntimeCompatibility.File.ReadAllTextAsync(filePath).ConfigureAwait(false));
 			} catch (Exception e) {
 				ASF.ArchiLogger.LogGenericException(e);
 				return null;
@@ -182,15 +191,18 @@ namespace ArchiSteamFarm {
 
 			// User might not know what he's doing
 			// Ensure that he can't screw core ASF variables
-			if (botConfig.GamesPlayedWhileIdle.Count <= ArchiHandler.MaxGamesPlayedConcurrently) {
-				return botConfig;
+			if ((botConfig.OnlineStatus < EPersonaState.Offline) || (botConfig.OnlineStatus >= EPersonaState.Max)) {
+				ASF.ArchiLogger.LogGenericError(string.Format(Strings.ErrorConfigPropertyInvalid, nameof(botConfig.OnlineStatus), botConfig.OnlineStatus));
+				return null;
 			}
 
-			ASF.ArchiLogger.LogGenericWarning(string.Format(Strings.WarningTooManyGamesToPlay, ArchiHandler.MaxGamesPlayedConcurrently, nameof(botConfig.GamesPlayedWhileIdle)));
+			if (botConfig.GamesPlayedWhileIdle.Count > ArchiHandler.MaxGamesPlayedConcurrently) {
+				ASF.ArchiLogger.LogGenericWarning(string.Format(Strings.WarningTooManyGamesToPlay, ArchiHandler.MaxGamesPlayedConcurrently, nameof(botConfig.GamesPlayedWhileIdle)));
 
-			HashSet<uint> validGames = new HashSet<uint>(botConfig.GamesPlayedWhileIdle.Take(ArchiHandler.MaxGamesPlayedConcurrently));
-			botConfig.GamesPlayedWhileIdle.IntersectWith(validGames);
-			botConfig.GamesPlayedWhileIdle.TrimExcess();
+				HashSet<uint> validGames = botConfig.GamesPlayedWhileIdle.Take(ArchiHandler.MaxGamesPlayedConcurrently).ToHashSet();
+				botConfig.GamesPlayedWhileIdle.IntersectWith(validGames);
+				botConfig.GamesPlayedWhileIdle.TrimExcess();
+			}
 
 			return botConfig;
 		}
@@ -207,7 +219,7 @@ namespace ArchiSteamFarm {
 			await WriteSemaphore.WaitAsync().ConfigureAwait(false);
 
 			try {
-				await File.WriteAllTextAsync(newFilePath, json).ConfigureAwait(false);
+				await RuntimeCompatibility.File.WriteAllTextAsync(newFilePath, json).ConfigureAwait(false);
 
 				if (File.Exists(filePath)) {
 					File.Replace(newFilePath, filePath, null);
@@ -222,6 +234,15 @@ namespace ArchiSteamFarm {
 			}
 
 			return true;
+		}
+
+		[Flags]
+		internal enum EBotBehaviour : byte {
+			None = 0,
+			RejectInvalidFriendInvites = 1,
+			RejectInvalidTrades = 2,
+			RejectInvalidGroupInvites = 4,
+			DismissInventoryNotifications = 8
 		}
 
 		internal enum EFarmingOrder : byte {

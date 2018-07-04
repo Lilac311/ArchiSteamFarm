@@ -2,15 +2,15 @@
 
   <PropertyGroup>
     <ApplicationIcon>ASF.ico</ApplicationIcon>
-    <AssemblyVersion>3.1.1.9</AssemblyVersion>
+    <AssemblyVersion>3.2.0.3</AssemblyVersion>
     <Authors>JustArchi</Authors>
     <Company>JustArchi</Company>
     <ConcurrentGarbageCollection>true</ConcurrentGarbageCollection>
     <Copyright>Copyright © ArchiSteamFarm 2015-2018</Copyright>
-    <CrossGenDuringPublish>false</CrossGenDuringPublish>
+    <DefaultItemExcludes>$(DefaultItemExcludes);debug/**;out/**</DefaultItemExcludes>
     <Description>ASF is an application that allows you to farm steam cards using multiple steam accounts simultaneously.</Description>
     <ErrorReport>none</ErrorReport>
-    <FileVersion>3.1.1.9</FileVersion>
+    <FileVersion>3.2.0.3</FileVersion>
     <LangVersion>latest</LangVersion>
     <NoWarn />
     <OutputType>Exe</OutputType>
@@ -19,9 +19,9 @@
     <PackageProjectUrl>https://github.com/JustArchi/ArchiSteamFarm</PackageProjectUrl>
     <RepositoryType>Git</RepositoryType>
     <RepositoryUrl>https://github.com/JustArchi/ArchiSteamFarm.git</RepositoryUrl>
-    <RuntimeIdentifiers>win-x64;linux-x64;linux-arm;osx-x64</RuntimeIdentifiers>
+    <RuntimeIdentifiers>linux-arm;linux-x64;osx-x64;win-x64</RuntimeIdentifiers>
     <ServerGarbageCollection>false</ServerGarbageCollection>
-    <TargetFramework>netcoreapp2.0</TargetFramework>
+    <TargetFrameworks>netcoreapp2.1;net472</TargetFrameworks>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(Configuration)' == 'Release'">
@@ -36,24 +36,35 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="HtmlAgilityPack" Version="1.7.1" />
-    <PackageReference Include="Humanizer" Version="2.2.0" />
+    <PackageReference Include="ConfigureAwaitChecker.Analyzer" Version="1.0.1" />
+    <PackageReference Include="HtmlAgilityPack" Version="1.8.4" />
+    <PackageReference Include="Humanizer" Version="2.3.3" />
+    <PackageReference Include="Newtonsoft.Json" Version="11.0.2" />
+    <PackageReference Include="NLog" Version="4.5.6" />
+    <PackageReference Include="SteamKit2" Version="2.1.0" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(TargetFramework)' == 'netcoreapp2.1'">
     <PackageReference Include="ILLink.Tasks" Version="0.1.5-preview-1461378" />
-    <PackageReference Include="Microsoft.Win32.Registry" Version="4.5.0-preview1-26216-02" />
-    <PackageReference Include="Newtonsoft.Json" Version="11.0.1" />
-    <PackageReference Include="NLog" Version="4.5.0-rc07" />
-    <PackageReference Include="protobuf-net" Version="2.3.7" />
-    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="4.5.0-preview1-26216-02" />
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="4.5.0" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(TargetFramework)' == 'net472'">
+    <Reference Include="System.Net.Http">
+      <HintPath>C:\Program Files (x86)\Reference Assemblies\Microsoft\Framework\.NETFramework\v4.7.2\System.Net.Http.dll</HintPath>
+    </Reference>
+    <Reference Include="System.Security">
+      <HintPath>C:\Program Files (x86)\Reference Assemblies\Microsoft\Framework\.NETFramework\v4.7.2\System.Security.dll</HintPath>
+    </Reference>
   </ItemGroup>
 
   <ItemGroup>
     <LinkerRootDescriptors Include="rootDescriptor.xml" />
   </ItemGroup>
 
+  <!-- Workaround for https://github.com/Microsoft/msbuild/issues/3350 -->
   <ItemGroup>
-    <Reference Include="SteamKit2">
-      <HintPath>lib\SteamKit2.dll</HintPath>
-    </Reference>
+    <CoreCompileCache Include="$(DefineConstants)" />
   </ItemGroup>
 
   <ItemGroup>
@@ -87,7 +98,7 @@
     <None Update="config\minimal.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
-    <Content Include="www\**">
+    <Content Include="www\**" Exclude="**\README.md">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
   </ItemGroup>

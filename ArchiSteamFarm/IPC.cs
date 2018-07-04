@@ -110,6 +110,10 @@ namespace ArchiSteamFarm {
 				return;
 			}
 
+			if (IsListening) {
+				return;
+			}
+
 			HttpListener = new HttpListener { IgnoreWriteExceptions = true };
 
 			try {
@@ -141,6 +145,11 @@ namespace ArchiSteamFarm {
 		}
 
 		internal static void Stop() {
+			if (!HttpListener.IsSupported) {
+				ASF.ArchiLogger.LogGenericError(string.Format(Strings.WarningFailedWithError, "!HttpListener.IsSupported"));
+				return;
+			}
+
 			if (!IsListening) {
 				return;
 			}
@@ -235,7 +244,7 @@ namespace ArchiSteamFarm {
 
 			const string requiredContentType = "application/json";
 
-			if (request.ContentType != requiredContentType) {
+			if (string.IsNullOrEmpty(request.ContentType) || ((request.ContentType != requiredContentType) && !request.ContentType.StartsWith(requiredContentType + ";", StringComparison.Ordinal))) {
 				await ResponseJsonObject(request, response, new GenericResponse<object>(false, nameof(request.ContentType) + " must be declared as " + requiredContentType), HttpStatusCode.NotAcceptable).ConfigureAwait(false);
 				return true;
 			}
@@ -262,6 +271,12 @@ namespace ArchiSteamFarm {
 			if (jsonRequest == null) {
 				await ResponseJsonObject(request, response, new GenericResponse<object>(false, string.Format(Strings.ErrorObjectIsNull, nameof(jsonRequest))), HttpStatusCode.BadRequest).ConfigureAwait(false);
 				return true;
+			}
+
+			if (jsonRequest.KeepSensitiveDetails) {
+				if (string.IsNullOrEmpty(jsonRequest.GlobalConfig.WebProxyPassword) && !string.IsNullOrEmpty(Program.GlobalConfig.WebProxyPassword)) {
+					jsonRequest.GlobalConfig.WebProxyPassword = Program.GlobalConfig.WebProxyPassword;
+				}
 			}
 
 			string filePath = Path.Combine(SharedInfo.ConfigDirectory, SharedInfo.GlobalConfigFileName);
@@ -371,7 +386,7 @@ namespace ArchiSteamFarm {
 
 			const string requiredContentType = "application/json";
 
-			if (request.ContentType != requiredContentType) {
+			if (string.IsNullOrEmpty(request.ContentType) || ((request.ContentType != requiredContentType) && !request.ContentType.StartsWith(requiredContentType + ";", StringComparison.Ordinal))) {
 				await ResponseJsonObject(request, response, new GenericResponse<object>(false, nameof(request.ContentType) + " must be declared as " + requiredContentType), HttpStatusCode.NotAcceptable).ConfigureAwait(false);
 				return true;
 			}
@@ -403,15 +418,15 @@ namespace ArchiSteamFarm {
 			string botName = WebUtility.UrlDecode(arguments[argumentsIndex]);
 
 			if (jsonRequest.KeepSensitiveDetails && Bot.Bots.TryGetValue(botName, out Bot bot)) {
-				if (string.IsNullOrEmpty(jsonRequest.BotConfig.SteamLogin)) {
+				if (string.IsNullOrEmpty(jsonRequest.BotConfig.SteamLogin) && !string.IsNullOrEmpty(bot.BotConfig.SteamLogin)) {
 					jsonRequest.BotConfig.SteamLogin = bot.BotConfig.SteamLogin;
 				}
 
-				if (string.IsNullOrEmpty(jsonRequest.BotConfig.SteamParentalPIN)) {
+				if (string.IsNullOrEmpty(jsonRequest.BotConfig.SteamParentalPIN) && !string.IsNullOrEmpty(bot.BotConfig.SteamParentalPIN)) {
 					jsonRequest.BotConfig.SteamParentalPIN = bot.BotConfig.SteamParentalPIN;
 				}
 
-				if (string.IsNullOrEmpty(jsonRequest.BotConfig.SteamPassword)) {
+				if (string.IsNullOrEmpty(jsonRequest.BotConfig.SteamPassword) && !string.IsNullOrEmpty(bot.BotConfig.SteamPassword)) {
 					jsonRequest.BotConfig.SteamPassword = bot.BotConfig.SteamPassword;
 				}
 			}
@@ -513,7 +528,7 @@ namespace ArchiSteamFarm {
 
 			const string requiredContentType = "application/json";
 
-			if (request.ContentType != requiredContentType) {
+			if (string.IsNullOrEmpty(request.ContentType) || ((request.ContentType != requiredContentType) && !request.ContentType.StartsWith(requiredContentType + ";", StringComparison.Ordinal))) {
 				await ResponseJsonObject(request, response, new GenericResponse<OrderedDictionary>(false, nameof(request.ContentType) + " must be declared as " + requiredContentType), HttpStatusCode.NotAcceptable).ConfigureAwait(false);
 				return true;
 			}
@@ -598,7 +613,7 @@ namespace ArchiSteamFarm {
 						WebSocketReceiveResult result = await webSocketContext.WebSocket.ReceiveAsync(new byte[0], CancellationToken.None).ConfigureAwait(false);
 
 						if (result.MessageType != WebSocketMessageType.Close) {
-							await webSocketContext.WebSocket.CloseAsync(WebSocketCloseStatus.InvalidMessageType, "You're not supposed to be sending any message but Close!", CancellationToken.None);
+							await webSocketContext.WebSocket.CloseAsync(WebSocketCloseStatus.InvalidMessageType, "You're not supposed to be sending any message but Close!", CancellationToken.None).ConfigureAwait(false);
 							break;
 						}
 
@@ -664,11 +679,6 @@ namespace ArchiSteamFarm {
 				return true;
 			}
 
-			if (obj == null) {
-				await ResponseJsonObject(request, response, new GenericResponse<object>(false, string.Format(Strings.ErrorParsingObject, targetType)), HttpStatusCode.BadRequest).ConfigureAwait(false);
-				return true;
-			}
-
 			await ResponseJsonObject(request, response, new GenericResponse<object>(true, "OK", obj)).ConfigureAwait(false);
 			return true;
 		}
@@ -707,7 +717,7 @@ namespace ArchiSteamFarm {
 			}
 
 			string baseType = targetType.BaseType?.GetUnifiedName();
-			HashSet<string> customAttributes = new HashSet<string>(targetType.CustomAttributes.Select(attribute => attribute.AttributeType.GetUnifiedName()));
+			HashSet<string> customAttributes = targetType.CustomAttributes.Select(attribute => attribute.AttributeType.GetUnifiedName()).ToHashSet();
 			string underlyingType = null;
 
 			Dictionary<string, string> body = new Dictionary<string, string>();
@@ -780,7 +790,7 @@ namespace ArchiSteamFarm {
 
 			string argument = WebUtility.UrlDecode(string.Join("", arguments.Skip(argumentsIndex)));
 
-			string directory = Path.Combine(SharedInfo.WebsiteDirectory, argument);
+			string directory = Path.Combine(SharedInfo.HomeDirectory, SharedInfo.WebsiteDirectory, argument);
 			if (!Directory.Exists(directory)) {
 				await ResponseJsonObject(request, response, new GenericResponse<HashSet<string>>(false, string.Format(Strings.ErrorIsInvalid, nameof(directory))), HttpStatusCode.BadRequest).ConfigureAwait(false);
 				return true;
@@ -795,7 +805,7 @@ namespace ArchiSteamFarm {
 				return true;
 			}
 
-			HashSet<string> result = new HashSet<string>(files.Select(Path.GetFileName));
+			HashSet<string> result = files.Select(Path.GetFileName).ToHashSet();
 
 			await ResponseJsonObject(request, response, new GenericResponse<HashSet<string>>(true, "OK", result)).ConfigureAwait(false);
 			return true;
@@ -822,7 +832,7 @@ namespace ArchiSteamFarm {
 				return false;
 			}
 
-			string filePath = SharedInfo.WebsiteDirectory + Path.DirectorySeparatorChar + absolutePath.Replace("/", Path.DirectorySeparatorChar.ToString());
+			string filePath = Path.Combine(SharedInfo.HomeDirectory, SharedInfo.WebsiteDirectory) + Path.DirectorySeparatorChar + absolutePath.Replace('/', Path.DirectorySeparatorChar);
 			if (Directory.Exists(filePath)) {
 				filePath = Path.Combine(filePath, "index.html");
 			}
@@ -936,13 +946,9 @@ namespace ArchiSteamFarm {
 					authorized = password == Program.GlobalConfig.IPCPassword;
 
 					if (authorized) {
-						FailedAuthorizations.Remove(ipAddress, out _);
+						FailedAuthorizations.TryRemove(ipAddress, out _);
 					} else {
-						if (FailedAuthorizations.TryGetValue(ipAddress, out attempts)) {
-							FailedAuthorizations[ipAddress] = ++attempts;
-						} else {
-							FailedAuthorizations[ipAddress] = 1;
-						}
+						FailedAuthorizations[ipAddress] = FailedAuthorizations.TryGetValue(ipAddress, out attempts) ? ++attempts : (byte) 1;
 					}
 				} finally {
 					AuthorizationSemaphore.Release();
@@ -1080,7 +1086,7 @@ namespace ArchiSteamFarm {
 			try {
 				response.ContentType = MimeTypes.TryGetValue(Path.GetExtension(filePath), out string mimeType) ? mimeType : "application/octet-stream";
 
-				byte[] content = await File.ReadAllBytesAsync(filePath).ConfigureAwait(false);
+				byte[] content = await RuntimeCompatibility.File.ReadAllBytesAsync(filePath).ConfigureAwait(false);
 				await ResponseBase(request, response, content).ConfigureAwait(false);
 			} catch (FileNotFoundException) {
 				await ResponseStatusCode(request, response, HttpStatusCode.NotFound).ConfigureAwait(false);
@@ -1162,6 +1168,9 @@ namespace ArchiSteamFarm {
 			[JsonProperty(Required = Required.Always)]
 			internal readonly GlobalConfig GlobalConfig;
 #pragma warning restore 649
+
+			[JsonProperty(Required = Required.DisallowNull)]
+			internal readonly bool KeepSensitiveDetails = true;
 
 			// Deserialized from JSON
 			private ASFRequest() { }

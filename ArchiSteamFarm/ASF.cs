@@ -25,7 +25,6 @@ using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
-using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using ArchiSteamFarm.JSON;
@@ -41,7 +40,7 @@ namespace ArchiSteamFarm {
 		private static FileSystemWatcher FileSystemWatcher;
 
 		internal static async Task<Version> CheckAndUpdateProgram(bool updateOverride = false) {
-			if (SharedInfo.IsCustomBuild || (Program.GlobalConfig.UpdateChannel == GlobalConfig.EUpdateChannel.None)) {
+			if (!SharedInfo.BuildInfo.CanUpdate || (Program.GlobalConfig.UpdateChannel == GlobalConfig.EUpdateChannel.None)) {
 				return null;
 			}
 
@@ -60,10 +59,8 @@ namespace ArchiSteamFarm {
 
 			ArchiLogger.LogGenericInfo(Strings.UpdateCheckingNewVersion);
 
-			string targetDirectory = Path.GetDirectoryName(Assembly.GetEntryAssembly().Location);
-
 			// Cleanup from previous update - update directory for old in-use runtime files
-			string backupDirectory = Path.Combine(targetDirectory, SharedInfo.UpdateDirectory);
+			string backupDirectory = Path.Combine(SharedInfo.HomeDirectory, SharedInfo.UpdateDirectory);
 			if (Directory.Exists(backupDirectory)) {
 				// It's entirely possible that old process is still running, wait a short moment for eventual cleanup
 				await Task.Delay(5000).ConfigureAwait(false);
@@ -78,7 +75,7 @@ namespace ArchiSteamFarm {
 
 			// Cleanup from previous update - old non-runtime in-use files
 			try {
-				foreach (string file in Directory.EnumerateFiles(targetDirectory, "*.old", SearchOption.AllDirectories)) {
+				foreach (string file in Directory.EnumerateFiles(SharedInfo.HomeDirectory, "*.old", SearchOption.AllDirectories)) {
 					File.Delete(file);
 				}
 			} catch (Exception e) {
@@ -139,7 +136,7 @@ namespace ArchiSteamFarm {
 				return null;
 			}
 
-			const string targetFile = SharedInfo.ASF + "-" + SharedInfo.Variant + ".zip";
+			string targetFile = SharedInfo.ASF + "-" + SharedInfo.BuildInfo.Variant + ".zip";
 			GitHub.ReleaseResponse.Asset binaryAsset = releaseResponse.Assets.FirstOrDefault(asset => asset.Name.Equals(targetFile, StringComparison.OrdinalIgnoreCase));
 
 			if (binaryAsset == null) {
@@ -161,15 +158,17 @@ namespace ArchiSteamFarm {
 
 			try {
 				using (ZipArchive zipArchive = new ZipArchive(new MemoryStream(response.Content))) {
-					UpdateFromArchive(zipArchive, targetDirectory);
+					if (!UpdateFromArchive(zipArchive, SharedInfo.HomeDirectory)) {
+						ArchiLogger.LogGenericError(Strings.WarningFailed);
+					}
 				}
 			} catch (Exception e) {
 				ArchiLogger.LogGenericException(e);
 				return null;
 			}
 
-			if (IsUnixVariant(SharedInfo.Variant)) {
-				string executable = Path.Combine(targetDirectory, SharedInfo.AssemblyName);
+			if (OS.IsUnix) {
+				string executable = Path.Combine(SharedInfo.HomeDirectory, SharedInfo.AssemblyName);
 				if (File.Exists(executable)) {
 					OS.UnixSetFileAccessExecutable(executable);
 				}
@@ -188,8 +187,23 @@ namespace ArchiSteamFarm {
 			// Before attempting to connect, initialize our configuration
 			await Bot.InitializeSteamConfiguration(Program.GlobalConfig.SteamProtocols, Program.GlobalDatabase.CellID, Program.GlobalDatabase.ServerListProvider).ConfigureAwait(false);
 
-			foreach (string botName in Directory.EnumerateFiles(SharedInfo.ConfigDirectory, "*" + SharedInfo.ConfigExtension).Select(Path.GetFileNameWithoutExtension).Where(botName => !string.IsNullOrEmpty(botName) && IsValidBotName(botName)).OrderBy(botName => botName)) {
-				await Bot.RegisterBot(botName).ConfigureAwait(false);
+			try {
+				IEnumerable<Task> tasks = Directory.EnumerateFiles(SharedInfo.ConfigDirectory, "*" + SharedInfo.ConfigExtension).Select(Path.GetFileNameWithoutExtension).Where(botName => !string.IsNullOrEmpty(botName) && IsValidBotName(botName)).OrderBy(botName => botName).Select(Bot.RegisterBot);
+
+				switch (Program.GlobalConfig.OptimizationMode) {
+					case GlobalConfig.EOptimizationMode.MinMemoryUsage:
+						foreach (Task task in tasks) {
+							await task.ConfigureAwait(false);
+						}
+
+						break;
+					default:
+						await Task.WhenAll(tasks).ConfigureAwait(false);
+						break;
+				}
+			} catch (Exception e) {
+				ArchiLogger.LogGenericException(e);
+				return;
 			}
 
 			if (Bot.Bots.Count == 0) {
@@ -210,22 +224,6 @@ namespace ArchiSteamFarm {
 			FileSystemWatcher.Renamed += OnRenamed;
 
 			FileSystemWatcher.EnableRaisingEvents = true;
-		}
-
-		private static bool IsUnixVariant(string variant) {
-			if (string.IsNullOrEmpty(variant)) {
-				ArchiLogger.LogNullError(nameof(variant));
-				return false;
-			}
-
-			switch (variant) {
-				case "linux-arm":
-				case "linux-x64":
-				case "osx-x64":
-					return true;
-				default:
-					return false;
-			}
 		}
 
 		private static bool IsValidBotName(string botName) {
@@ -511,7 +509,7 @@ namespace ArchiSteamFarm {
 		}
 
 		private static async Task RestartOrExit() {
-			if (!Program.ServiceMode && Program.GlobalConfig.AutoRestart) {
+			if (Program.RestartAllowed && Program.GlobalConfig.AutoRestart) {
 				ArchiLogger.LogGenericInfo(Strings.Restarting);
 				await Task.Delay(5000).ConfigureAwait(false);
 				await Program.Restart().ConfigureAwait(false);
@@ -522,10 +520,10 @@ namespace ArchiSteamFarm {
 			}
 		}
 
-		private static void UpdateFromArchive(ZipArchive archive, string targetDirectory) {
+		private static bool UpdateFromArchive(ZipArchive archive, string targetDirectory) {
 			if ((archive == null) || string.IsNullOrEmpty(targetDirectory)) {
 				ArchiLogger.LogNullError(nameof(archive) + " || " + nameof(targetDirectory));
-				return;
+				return false;
 			}
 
 			string backupDirectory = Path.Combine(targetDirectory, SharedInfo.UpdateDirectory);
@@ -539,6 +537,9 @@ namespace ArchiSteamFarm {
 					// Files that we want to keep in original directory
 					case "NLog.config":
 						continue;
+					case null:
+						ArchiLogger.LogNullError(nameof(fileName));
+						return false;
 				}
 
 				string target = Path.Combine(backupDirectory, fileName);
@@ -549,10 +550,22 @@ namespace ArchiSteamFarm {
 			string runtimesDirectory = Path.Combine(targetDirectory, "runtimes");
 			if (Directory.Exists(runtimesDirectory)) {
 				foreach (string file in Directory.EnumerateFiles(runtimesDirectory, "*", SearchOption.AllDirectories)) {
-					string directory = Path.Combine(backupDirectory, Path.GetDirectoryName(Path.GetRelativePath(targetDirectory, file)));
+					string directoryName = Path.GetDirectoryName(RuntimeCompatibility.Path.GetRelativePath(targetDirectory, file));
+					if (string.IsNullOrEmpty(directoryName)) {
+						ArchiLogger.LogNullError(nameof(directoryName));
+						return false;
+					}
+
+					string directory = Path.Combine(backupDirectory, directoryName);
 					Directory.CreateDirectory(directory);
 
-					string target = Path.Combine(directory, Path.GetFileName(file));
+					string fileName = Path.GetFileName(file);
+					if (string.IsNullOrEmpty(fileName)) {
+						ArchiLogger.LogNullError(nameof(fileName));
+						return false;
+					}
+
+					string target = Path.Combine(directory, fileName);
 					File.Move(file, target);
 				}
 			}
@@ -560,6 +573,11 @@ namespace ArchiSteamFarm {
 			foreach (ZipArchiveEntry zipFile in archive.Entries) {
 				string file = Path.Combine(targetDirectory, zipFile.FullName);
 				string directory = Path.GetDirectoryName(file);
+
+				if (string.IsNullOrEmpty(directory)) {
+					ArchiLogger.LogNullError(nameof(directory));
+					return false;
+				}
 
 				if (!Directory.Exists(directory)) {
 					Directory.CreateDirectory(directory);
@@ -584,6 +602,8 @@ namespace ArchiSteamFarm {
 					// Ignored - that file is indeed in use, it will be deleted after restart
 				}
 			}
+
+			return true;
 		}
 
 		internal enum EUserInputType : byte {

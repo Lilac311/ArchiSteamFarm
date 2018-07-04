@@ -14,8 +14,12 @@ clone_depth: 10
 environment:
   DOTNET_CLI_TELEMETRY_OPTOUT: true
   DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
-  VARIANTS: generic win-x64 linux-x64 linux-arm osx-x64 # NOTE: When modifying variants, don't forget to update ASF_VARIANT definitions in SharedInfo.cs!
+  NET_CORE_VERSION: netcoreapp2.1
+  NET_FRAMEWORK_VERSION: net472
+  VARIANTS: generic generic-netf linux-arm linux-x64 osx-x64 win-x64 # NOTE: When modifying variants, don't forget to update ASF_VARIANT definitions in SharedInfo.cs!
 matrix:
+  allow_failures:
+    - image: Visual Studio 2017 Preview
   fast_finish: true
 before_build:
 - pwsh: >-
@@ -28,7 +32,9 @@ before_build:
 
     dotnet --info
 
-    dotnet restore
+    if ($LastExitCode -ne 0) {
+        throw "Last command failed."
+    }
 build_script:
 - pwsh: >-
     Set-StrictMode -Version Latest
@@ -38,7 +44,11 @@ build_script:
     $ProgressPreference = 'SilentlyContinue'
 
 
-    dotnet build -c "$env:CONFIGURATION" -o 'out\source' --no-restore /nologo
+    dotnet build ArchiSteamFarm -c "$env:CONFIGURATION" -f "$env:NET_CORE_VERSION" -o 'out\source' /nologo
+
+    if ($LastExitCode -ne 0) {
+        throw "Last command failed."
+    }
 test_script:
 - pwsh: >-
     Set-StrictMode -Version Latest
@@ -48,7 +58,11 @@ test_script:
     $ProgressPreference = 'SilentlyContinue'
 
 
-    dotnet test ArchiSteamFarm.Tests -c "$env:CONFIGURATION" -o 'out\source' --no-build --no-restore
+    dotnet test ArchiSteamFarm.Tests -c "$env:CONFIGURATION" -f "$env:NET_CORE_VERSION" -o 'out\source' /nologo
+
+    if ($LastExitCode -ne 0) {
+        throw "Last command failed."
+    }
 after_test:
 - pwsh: >-
     Set-StrictMode -Version Latest
@@ -59,7 +73,7 @@ after_test:
 
 
     $PublishBlock = {
-        param($Variant)
+        param($variant)
 
         Set-StrictMode -Version Latest
         $ErrorActionPreference = 'Stop'
@@ -67,40 +81,78 @@ after_test:
 
         Set-Location -Path "$env:APPVEYOR_BUILD_FOLDER"
 
-        if ($Variant -eq 'generic') {
-            dotnet publish ArchiSteamFarm -c "$env:CONFIGURATION" -o "out\$Variant" --no-restore /nologo "/p:ASFVariant=$Variant"
+        if ($variant -like '*-netf') {
+            $compressionMethod = 'Deflate' # This depends on what ZipArchive supports on given platform
+            $targetFramework = $env:NET_FRAMEWORK_VERSION
         } else {
-            dotnet publish ArchiSteamFarm -c "$env:CONFIGURATION" -o "out\$Variant" -r "$Variant" --no-restore /nologo "/p:ASFVariant=$Variant"
+            $compressionMethod = 'Deflate64' # This depends on what ZipArchive supports on given platform
+            $targetFramework = $env:NET_CORE_VERSION
+        }
+
+        if ($variant -like 'generic*') {
+            # TODO: Workaround https://github.com/mono/linker/issues/286 until it's resolved
+            # Don't forget to remove it from docker files too
+            dotnet publish ArchiSteamFarm -c "$env:CONFIGURATION" -f "$targetFramework" -o "out\$variant" /nologo "/p:ASFVariant=$variant" "/p:LinkDuringPublish=false"
+        } else {
+            dotnet publish ArchiSteamFarm -c "$env:CONFIGURATION" -f "$targetFramework" -o "out\$variant" -r "$variant" /nologo "/p:ASFVariant=$variant" "/p:CrossGenDuringPublish=false"
+        }
+
+        if ($LastExitCode -ne 0) {
+            throw "Last command failed."
         }
 
         # If we include any helper scripts for this variant, copy them to output directory
-        if (Test-Path -Path "ArchiSteamFarm\scripts\$Variant" -PathType Container) {
-            Copy-Item "ArchiSteamFarm\scripts\$Variant\*" -Destination "ArchiSteamFarm\out\$Variant"
+        if (Test-Path -Path "ArchiSteamFarm\scripts\$variant" -PathType Container) {
+            Copy-Item "ArchiSteamFarm\scripts\$variant\*" -Destination "ArchiSteamFarm\out\$variant"
         }
 
         # Until https://github.com/dotnet/cli/issues/3267 happens, we'll hack dotnet binary icon on Windows and include .ico file on other platforms
-        if (Test-Path -Path "ArchiSteamFarm\out\$Variant\ArchiSteamFarm.exe" -PathType Leaf) {
-            tools\rcedit\rcedit-x64.exe "ArchiSteamFarm\out\$Variant\ArchiSteamFarm.exe" --set-icon 'resources\ASF.ico'
-        } else {
-            Copy-Item 'resources\ASF.ico' -Destination "ArchiSteamFarm\out\$Variant\ArchiSteamFarm.ico"
+        if ($targetFramework -eq "$env:NET_CORE_VERSION") {
+            if (Test-Path -Path "ArchiSteamFarm\out\$variant\ArchiSteamFarm.exe" -PathType Leaf) {
+                tools\rcedit\rcedit-x64.exe "ArchiSteamFarm\out\$variant\ArchiSteamFarm.exe" --set-icon 'resources\ASF.ico'
+
+                if ($LastExitCode -ne 0) {
+                    throw "Last command failed."
+                }
+            } else {
+                Copy-Item 'resources\ASF.ico' -Destination "ArchiSteamFarm\out\$variant\ArchiSteamFarm.ico"
+            }
         }
 
-        $zipArgs = '-mx=1'
+        # By default use fastest compression
+        $compressionArgs = '-mx=1'
 
+        # Include extra logic for builds marked for release
         if ($env:APPVEYOR_REPO_TAG -eq 'true') {
             # Update link in Changelog.html accordingly
-            if (Test-Path -Path "ArchiSteamFarm\out\$Variant\Changelog.html" -PathType Leaf) {
-                (Get-Content -Path "ArchiSteamFarm\out\$Variant\Changelog.html").Replace('ArchiSteamFarm/commits/master', "ArchiSteamFarm/releases/tag/$env:APPVEYOR_REPO_TAG_NAME") | Set-Content -Path "ArchiSteamFarm\out\$Variant\Changelog.html"
+            if (Test-Path -Path "ArchiSteamFarm\out\$variant\Changelog.html" -PathType Leaf) {
+                (Get-Content -Path "ArchiSteamFarm\out\$variant\Changelog.html").Replace('ArchiSteamFarm/commits/master', "ArchiSteamFarm/releases/tag/$env:APPVEYOR_REPO_TAG_NAME") | Set-Content -Path "ArchiSteamFarm\out\$variant\Changelog.html"
             }
 
+            # If this build is going to be deployed further, prefer maximum compression
             if ($env:APPVEYOR_BUILD_WORKER_IMAGE -eq 'Visual Studio 2017') {
-                $zipArgs = '-mx=9', '-mfb=257', '-mpass=15'
+                $compressionArgs = '-mx=9', '-mpass=15'
+
+                if ($compressionMethod -eq 'Deflate64') {
+                    $compressionArgs += '-mfb=257'
+                } else {
+                    $compressionArgs += '-mfb=258'
+                }
             }
         }
 
-        7z a -bd -tzip -mm=Deflate64 $zipArgs "ArchiSteamFarm\out\ASF-$Variant.zip" "$env:APPVEYOR_BUILD_FOLDER\ArchiSteamFarm\out\$Variant\*"
+        7z a -bd -tzip "-mm=$compressionMethod" $compressionArgs "ArchiSteamFarm\out\ASF-$variant.zip" "$env:APPVEYOR_BUILD_FOLDER\ArchiSteamFarm\out\$variant\*"
+
+        if ($LastExitCode -ne 0) {
+            throw "Last command failed."
+        }
+
         # TODO: Change me to Push-AppveyorArtifact once https://github.com/appveyor/ci/issues/2183 is fixed
-        appveyor PushArtifact "ArchiSteamFarm\out\ASF-$Variant.zip" -FileName "ASF-$Variant.zip" -DeploymentName "ASF-$Variant.zip"
+        appveyor PushArtifact "ArchiSteamFarm\out\ASF-$variant.zip" -FileName "ASF-$variant.zip" -DeploymentName "ASF-$variant.zip"
+
+        if ($LastExitCode -ne 0) {
+            throw "Last command failed."
+        }
     }
 
     foreach ($variant in $env:VARIANTS.Split([char[]] $null, [System.StringSplitOptions]::RemoveEmptyEntries)) {

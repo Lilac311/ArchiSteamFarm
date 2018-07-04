@@ -71,10 +71,13 @@ namespace ArchiSteamFarm {
 				case EMsg.ClientUserNotifications:
 					HandleUserNotifications(packetMsg);
 					break;
+				case EMsg.ClientVanityURLChangedNotification:
+					HandleVanityURLChangedNotification(packetMsg);
+					break;
 			}
 		}
 
-		internal void AcceptClanInvite(ulong clanID, bool accept) {
+		internal void AcknowledgeClanInvite(ulong clanID, bool acceptInvite) {
 			if (clanID == 0) {
 				ArchiLogger.LogNullError(nameof(clanID));
 				return;
@@ -84,10 +87,10 @@ namespace ArchiSteamFarm {
 				return;
 			}
 
-			ClientMsg<CMsgClientClanInviteAction> request = new ClientMsg<CMsgClientClanInviteAction> {
+			ClientMsg<CMsgClientAcknowledgeClanInvite> request = new ClientMsg<CMsgClientAcknowledgeClanInvite> {
 				Body = {
 					ClanID = clanID,
-					AcceptInvite = accept
+					AcceptInvite = acceptInvite
 				}
 			};
 
@@ -114,13 +117,15 @@ namespace ArchiSteamFarm {
 				Client.Send(request);
 				await Task.Delay(Bot.CallbackSleep).ConfigureAwait(false);
 
-				request.Body.games_played.Add(new CMsgClientGamesPlayed.GamePlayed {
-					game_extra_info = gameName,
-					game_id = new GameID {
-						AppType = GameID.GameType.Shortcut,
-						ModID = uint.MaxValue
+				request.Body.games_played.Add(
+					new CMsgClientGamesPlayed.GamePlayed {
+						game_extra_info = gameName,
+						game_id = new GameID {
+							AppType = GameID.GameType.Shortcut,
+							ModID = uint.MaxValue
+						}
 					}
-				});
+				);
 
 				// Max games count is affected by valid AppIDs only, therefore gameName alone doesn't need exclusive slot
 				maxGamesCount++;
@@ -155,7 +160,9 @@ namespace ArchiSteamFarm {
 			Client.Send(request);
 
 			try {
+#pragma warning disable ConfigureAwaitChecker // CAC001
 				return await new AsyncJob<RedeemGuestPassResponseCallback>(Client, request.SourceJobID);
+#pragma warning restore ConfigureAwaitChecker // CAC001
 			} catch (Exception e) {
 				ArchiLogger.LogGenericException(e);
 				return null;
@@ -180,7 +187,9 @@ namespace ArchiSteamFarm {
 			Client.Send(request);
 
 			try {
+#pragma warning disable ConfigureAwaitChecker // CAC001
 				return await new AsyncJob<PurchaseResponseCallback>(Client, request.SourceJobID);
+#pragma warning restore ConfigureAwaitChecker // CAC001
 			} catch (Exception e) {
 				ArchiLogger.LogGenericException(e);
 				return null;
@@ -262,9 +271,19 @@ namespace ArchiSteamFarm {
 			Client.PostCallback(new UserNotificationsCallback(packetMsg.TargetJobID, response.Body));
 		}
 
+		private void HandleVanityURLChangedNotification(IPacketMsg packetMsg) {
+			if (packetMsg == null) {
+				ArchiLogger.LogNullError(nameof(packetMsg));
+				return;
+			}
+
+			ClientMsgProtobuf<CMsgClientVanityURLChangedNotification> response = new ClientMsgProtobuf<CMsgClientVanityURLChangedNotification>(packetMsg);
+			Client.PostCallback(new VanityURLChangedCallback(packetMsg.TargetJobID, response.Body));
+		}
+
 		internal sealed class OfflineMessageCallback : CallbackMsg {
 			internal readonly uint OfflineMessagesCount;
-			internal readonly HashSet<uint> Steam3IDs;
+			internal readonly HashSet<ulong> SteamIDs;
 
 			internal OfflineMessageCallback(JobID jobID, CMsgClientOfflineMessageNotification msg) {
 				if ((jobID == null) || (msg == null)) {
@@ -278,7 +297,7 @@ namespace ArchiSteamFarm {
 					return;
 				}
 
-				Steam3IDs = new HashSet<uint>(msg.friends_with_offline_messages);
+				SteamIDs = msg.friends_with_offline_messages.Select(steam3ID => new SteamID(steam3ID, EUniverse.Public, EAccountType.Individual).ConvertToUInt64()).ToHashSet();
 			}
 		}
 
@@ -449,6 +468,19 @@ namespace ArchiSteamFarm {
 				Chat,
 				HelpRequestReplies,
 				AccountAlerts
+			}
+		}
+
+		internal sealed class VanityURLChangedCallback : CallbackMsg {
+			internal readonly string VanityURL;
+
+			internal VanityURLChangedCallback(JobID jobID, CMsgClientVanityURLChangedNotification msg) {
+				if ((jobID == null) || (msg == null)) {
+					throw new ArgumentNullException(nameof(jobID) + " || " + nameof(msg));
+				}
+
+				JobID = jobID;
+				VanityURL = msg.vanity_url;
 			}
 		}
 	}

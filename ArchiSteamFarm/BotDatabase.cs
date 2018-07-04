@@ -185,7 +185,7 @@ namespace ArchiSteamFarm {
 			return IdlingPriorityAppIDs.Contains(appID);
 		}
 
-		internal static BotDatabase Load(string filePath) {
+		internal static async Task<BotDatabase> Load(string filePath) {
 			if (string.IsNullOrEmpty(filePath)) {
 				ASF.ArchiLogger.LogNullError(nameof(filePath));
 				return null;
@@ -198,7 +198,7 @@ namespace ArchiSteamFarm {
 			BotDatabase botDatabase;
 
 			try {
-				botDatabase = JsonConvert.DeserializeObject<BotDatabase>(File.ReadAllText(filePath));
+				botDatabase = JsonConvert.DeserializeObject<BotDatabase>(await RuntimeCompatibility.File.ReadAllTextAsync(filePath).ConfigureAwait(false));
 			} catch (Exception e) {
 				ASF.ArchiLogger.LogGenericException(e);
 				return null;
@@ -320,7 +320,7 @@ namespace ArchiSteamFarm {
 				}
 
 				// We always want to write entire content to temporary file first, in order to never load corrupted data, also when target file doesn't exist
-				await File.WriteAllTextAsync(newFilePath, json).ConfigureAwait(false);
+				await RuntimeCompatibility.File.WriteAllTextAsync(newFilePath, json).ConfigureAwait(false);
 
 				if (File.Exists(FilePath)) {
 					File.Replace(newFilePath, FilePath, null);

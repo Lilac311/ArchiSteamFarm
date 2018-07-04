@@ -210,10 +210,6 @@ StackTrace:
   <data name="Starting" xml:space="preserve">
     <value>Pokretanje...</value>
   </data>
-  <data name="StatusCode" xml:space="preserve">
-    <value>Status kod: {0}</value>
-    <comment>{0} will be replaced by status code number/name</comment>
-  </data>
   <data name="Success" xml:space="preserve">
     <value>Uspeh!</value>
   </data>
@@ -389,9 +385,7 @@ StackTrace:
     <value>Odjavljen sa Steam-a: {0}</value>
     <comment>{0} will be replaced by logging off reason (string)</comment>
   </data>
-  <data name="BotLoggedOn" xml:space="preserve">
-    <value>Uspešno ulogovanje!</value>
-  </data>
+  
   <data name="BotLoggingIn" xml:space="preserve">
     <value>Prijavljivanje...</value>
   </data>
@@ -487,6 +481,9 @@ StackTrace:
     <value>ASF će pokušati da koristi vašu preferiranu {0} "kulturu", ali prevod u taj jezik je samo {1} gotov. Možda bi ste mogli da nam pomogne u prevodu ASF na vaš jezik?</value>
     <comment>{0} will be replaced by culture code, such as "en-US", {1} will be replaced by completeness percentage, such as "78.5%"</comment>
   </data>
+  
+  
+  
   
   
   

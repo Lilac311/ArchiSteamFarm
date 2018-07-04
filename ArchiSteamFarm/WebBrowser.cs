@@ -32,10 +32,10 @@ using Newtonsoft.Json;
 
 namespace ArchiSteamFarm {
 	internal sealed class WebBrowser : IDisposable {
+		internal const byte MaxConnections = 10; // Defines maximum number of connections per ServicePoint. Be careful, as it also defines maximum number of sockets in CLOSE_WAIT state
 		internal const byte MaxTries = 5; // Defines maximum number of recommended tries for a single request
 
 		private const byte ExtendedTimeoutMultiplier = 10; // Defines multiplier of timeout for WebBrowsers dealing with huge data (ASF update)
-		private const byte MaxConnections = 10; // Defines maximum number of connections per ServicePoint. Be careful, as it also defines maximum number of sockets in CLOSE_WAIT state
 		private const byte MaxIdleTime = 15; // Defines in seconds, how long socket is allowed to stay in CLOSE_WAIT state after there are no connections to it
 
 		internal readonly CookieContainer CookieContainer = new CookieContainer();
@@ -45,16 +45,20 @@ namespace ArchiSteamFarm {
 		private readonly ArchiLogger ArchiLogger;
 		private readonly HttpClient HttpClient;
 
-		internal WebBrowser(ArchiLogger archiLogger, bool extendedTimeout = false) {
+		internal WebBrowser(ArchiLogger archiLogger, IWebProxy webProxy = null, bool extendedTimeout = false) {
 			ArchiLogger = archiLogger ?? throw new ArgumentNullException(nameof(archiLogger));
 
 			HttpClientHandler httpClientHandler = new HttpClientHandler {
 				AllowAutoRedirect = false, // This must be false if we want to handle custom redirection schemes such as "steammobile"
 				AutomaticDecompression = DecompressionMethods.Deflate | DecompressionMethods.GZip,
 				CookieContainer = CookieContainer,
-				MaxConnectionsPerServer = MaxConnections,
-				UseProxy = false
+				Proxy = webProxy,
+				UseProxy = webProxy != null
 			};
+
+			if (!RuntimeCompatibility.IsRunningOnMono) {
+				httpClientHandler.MaxConnectionsPerServer = MaxConnections;
+			}
 
 			HttpClient = new HttpClient(httpClientHandler) { Timeout = TimeSpan.FromSeconds(extendedTimeout ? ExtendedTimeoutMultiplier * Program.GlobalConfig.ConnectionTimeout : Program.GlobalConfig.ConnectionTimeout) };
 
@@ -75,7 +79,9 @@ namespace ArchiSteamFarm {
 			ServicePointManager.Expect100Continue = false;
 
 			// Reuse ports if possible
-			ServicePointManager.ReusePort = true;
+			if (!RuntimeCompatibility.IsRunningOnMono) {
+				ServicePointManager.ReusePort = true;
+			}
 		}
 
 		internal static HtmlDocument StringToHtmlDocument(string html) {
@@ -353,6 +359,10 @@ namespace ArchiSteamFarm {
 					request.Headers.Referrer = new Uri(referer);
 				}
 
+				if (Debugging.IsUserDebugging) {
+					ArchiLogger.LogGenericDebug(httpMethod + " " + requestUri);
+				}
+
 				try {
 					response = await HttpClient.SendAsync(request, httpCompletionOption).ConfigureAwait(false);
 				} catch (Exception e) {
@@ -362,7 +372,15 @@ namespace ArchiSteamFarm {
 			}
 
 			if (response == null) {
+				if (Debugging.IsUserDebugging) {
+					ArchiLogger.LogGenericDebug("null <- " + httpMethod + " " + requestUri);
+				}
+
 				return null;
+			}
+
+			if (Debugging.IsUserDebugging) {
+				ArchiLogger.LogGenericDebug(response.StatusCode + " <- " + httpMethod + " " + requestUri);
 			}
 
 			if (response.IsSuccessStatusCode) {
@@ -395,9 +413,7 @@ namespace ArchiSteamFarm {
 			}
 
 			using (response) {
-				if (Debugging.IsDebugBuild) {
-					ArchiLogger.LogGenericDebug(string.Format(Strings.ErrorFailingRequest, requestUri));
-					ArchiLogger.LogGenericDebug(string.Format(Strings.StatusCode, response.StatusCode));
+				if (Debugging.IsUserDebugging) {
 					ArchiLogger.LogGenericDebug(string.Format(Strings.Content, await response.Content.ReadAsStringAsync().ConfigureAwait(false)));
 				}
 
